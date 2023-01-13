@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Tracert": {
+      "commandName": "Project",
+      "commandLineArgs": "ya.ru"
+    }
+  }
+}
