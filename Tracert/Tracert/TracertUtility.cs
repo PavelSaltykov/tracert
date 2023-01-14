@@ -1,5 +1,7 @@
 ﻿using System.Diagnostics;
+using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 
 namespace Tracert
 {
@@ -17,8 +19,7 @@ namespace Tracert
 
         public const string TimeoutMessage = "Request timed out.";
 
-        public static void PrintTraceRoute(string target, 
-            int maxHops = DefaultMaxHops, int timeout = DefaultTimeout)
+        public static void PrintTraceRoute(string target, int maxHops = DefaultMaxHops, int timeout = DefaultTimeout)
         {
             if (maxHops <= 0)
                 throw new ArgumentOutOfRangeException(nameof(maxHops));
@@ -26,7 +27,7 @@ namespace Tracert
             if (timeout <= 0)
                 throw new ArgumentOutOfRangeException(nameof(timeout));
 
-            void PrintNodes()
+            void PrintNodes(IPAddress targetIp)
             {
                 for (int ttl = 1; ttl <= maxHops; ++ttl)
                 {
@@ -36,7 +37,7 @@ namespace Tracert
                     for (int i = 0; i < NumberOfPackets; ++i)
                     {
                         stopwatch.Restart();
-                        var reply = pingSender.Send(target, timeout, buffer, options);
+                        var reply = pingSender.Send(targetIp, timeout, buffer, options);
                         stopwatch.Stop();
 
                         switch (reply.Status)
@@ -47,7 +48,10 @@ namespace Tracert
                                 Console.Write($"\t{stopwatch.ElapsedMilliseconds} ms");
                                 if (i == NumberOfPackets - 1)
                                 {
-                                    Console.WriteLine($"\t{reply.Address}");
+                                    var hostName = GetHostNameOrNull(reply.Address);
+                                    var nodeName = hostName != null ?
+                                        $"{hostName} [{reply.Address}]" : reply.Address.ToString();
+                                    Console.WriteLine($"\t{nodeName}");
                                     if (reply.Status == IPStatus.Success)
                                         return;
                                 }
@@ -62,10 +66,45 @@ namespace Tracert
                 }
             }
 
-            Console.WriteLine($"Tracing route to {target}");
+            target = target.Trim();
+            var targetIp = GetIPAddressOrNull(target);
+            if (targetIp == null)
+            {
+                Console.WriteLine($"Unable to resolve target system name {target}.");
+                return;
+            }
+
+            var hostName = GetHostNameOrNull(targetIp);
+            var targetName = hostName != null ? $"{hostName} [{targetIp}]" : targetIp.ToString();
+
+            Console.WriteLine($"Tracing route to {targetName}");
             Console.WriteLine($"over a maximum of {maxHops} hops:\n");
-            PrintNodes();
+            PrintNodes(targetIp);
             Console.WriteLine("\nTrace complete.");
+        }
+
+        private static IPAddress? GetIPAddressOrNull(string host)
+        {
+            try
+            {
+                return Dns.GetHostAddresses(host).First();
+            }
+            catch (Exception e) when (e is ArgumentException || e is SocketException)
+            {
+                return null;
+            }
+        }
+
+        private static string? GetHostNameOrNull(IPAddress ip)
+        {
+            try
+            {
+                return Dns.GetHostEntry(ip).HostName;
+            }
+            catch (Exception e) when (e is ArgumentException || e is SocketException)
+            {
+                return null;
+            }
         }
     }
 }
