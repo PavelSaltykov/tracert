@@ -27,45 +27,6 @@ namespace Tracert
             if (timeout <= 0)
                 throw new ArgumentOutOfRangeException(nameof(timeout));
 
-            void PrintNodes(IPAddress targetIp)
-            {
-                for (int ttl = 1; ttl <= maxHops; ++ttl)
-                {
-                    Console.Write($"  {ttl}");
-                    options.Ttl = ttl;
-
-                    for (int i = 0; i < NumberOfPackets; ++i)
-                    {
-                        stopwatch.Restart();
-                        var reply = pingSender.Send(targetIp, timeout, buffer, options);
-                        stopwatch.Stop();
-
-                        switch (reply.Status)
-                        {
-                            case IPStatus.TtlExpired:
-                            case IPStatus.TimeExceeded:
-                            case IPStatus.Success:
-                                Console.Write($"\t{stopwatch.ElapsedMilliseconds} ms");
-                                if (i == NumberOfPackets - 1)
-                                {
-                                    var hostName = GetHostNameOrNull(reply.Address);
-                                    var nodeName = hostName != null ?
-                                        $"{hostName} [{reply.Address}]" : reply.Address.ToString();
-                                    Console.WriteLine($"\t{nodeName}");
-                                    if (reply.Status == IPStatus.Success)
-                                        return;
-                                }
-                                break;
-                            default:
-                                Console.Write("\t*");
-                                if (i == NumberOfPackets - 1)
-                                    Console.WriteLine($"\t{TimeoutMessage}");
-                                break;
-                        }
-                    }
-                }
-            }
-
             target = target.Trim();
             var targetIp = GetIPAddressOrNull(target);
             if (targetIp == null)
@@ -79,8 +40,70 @@ namespace Tracert
 
             Console.WriteLine($"Tracing route to {targetName}");
             Console.WriteLine($"over a maximum of {maxHops} hops:\n");
-            PrintNodes(targetIp);
+            PrintNodes(targetIp, maxHops, timeout);
             Console.WriteLine("\nTrace complete.");
+        }
+
+        private static void PrintNodes(IPAddress targetIp, int maxHops, int timeout)
+        {
+            for (int ttl = 1; ttl <= maxHops; ++ttl)
+            {
+                Console.Write($"  {ttl}");
+                IPAddress? nodeAddress;
+
+                try
+                {
+                    nodeAddress = GetNodeIPAddress(ttl, targetIp, timeout);
+                }
+                catch (InvalidOperationException e)
+                {
+                    Console.WriteLine($"\t{e.Message}");
+                    return;
+                }
+
+                if (nodeAddress == null)
+                {
+                    Console.WriteLine($"\t{TimeoutMessage}");
+                    continue;
+                }
+
+                var hostName = GetHostNameOrNull(nodeAddress);
+                var nodeName = hostName != null ? $"{hostName} [{nodeAddress}]" : nodeAddress.ToString();
+                Console.WriteLine($"\t{nodeName}");
+
+                if (nodeAddress.Equals(targetIp))
+                    return;
+            }
+        }
+
+        private static IPAddress? GetNodeIPAddress(int ttl, IPAddress targetIp, int timeout)
+        {
+            options.Ttl = ttl;
+            IPAddress? nodeAddress = null;
+
+            for (int i = 0; i < NumberOfPackets; ++i)
+            {
+                stopwatch.Restart();
+                var reply = pingSender.Send(targetIp, timeout, buffer, options);
+                stopwatch.Stop();
+
+                switch (reply.Status)
+                {
+                    case IPStatus.TtlExpired:
+                    case IPStatus.TimeExceeded:
+                    case IPStatus.Success:
+                        Console.Write($"\t{stopwatch.ElapsedMilliseconds} ms");
+                        nodeAddress = reply.Address;
+                        break;
+                    case IPStatus.TimedOut:
+                        Console.Write("\t*");
+                        break;
+                    default:
+                        var message = ((int)reply.Status) == 11050 ? "General Failure" : reply.Status.ToString();
+                        throw new InvalidOperationException(message);
+                }
+            }
+            return nodeAddress;
         }
 
         private static IPAddress? GetIPAddressOrNull(string host)
